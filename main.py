@@ -51,6 +51,7 @@ class Enemy(pygame.sprite.Sprite):
     def __init__(self, *groups, enemy_image, x, y):
         super().__init__(*groups)
         self.image = load_image(enemy_image)
+        self.image = pygame.transform.scale(self.image, (self.image.get_rect()[2] * 4, self.image.get_rect()[3] * 4))
         self.rect = self.image.get_rect()
         self.rect.x = x
         self.rect.y = y
