@@ -2,7 +2,6 @@ import pygame
 import os
 import sys
 
-
 pygame.init()
 
 
@@ -68,20 +67,19 @@ bul.kill()
 running = True
 clock = pygame.time.Clock()
 
-
 while running:
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
             running = False
-        if event.type == pygame.MOUSEBUTTONDOWN:
-            if not bul or not bul.alive():
-                bul = Bullet(all_sprites, x=player.rect.x, y=player.rect.y)
 
     keys = pygame.key.get_pressed()
     if keys[pygame.K_LEFT]:
         player.move(-1)
     if keys[pygame.K_RIGHT]:
         player.move(1)
+    if keys[pygame.K_SPACE]:
+        if not bul or not bul.alive():
+            bul = Bullet(all_sprites, x=player.rect.x, y=player.rect.y)
     if bul:
         bul.update()
 
@@ -92,4 +90,3 @@ while running:
     pygame.display.flip()
 
 pygame.quit()
-
