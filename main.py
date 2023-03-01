@@ -4,7 +4,7 @@ import pygame
 import sys
 import os
 
-SCREEN_SIZE = (896, 768)  # 224, 168 если делить на 4 (все увеличено в 4 раза)
+SCREEN_SIZE = (896, 768)
 FPS = 60
 VOLUME = 0.2
 
@@ -176,7 +176,7 @@ class Enemy(pygame.sprite.Sprite):
                 self.rect.y += 16
                 self.move_count = 17
                 self.direction = 0 - self.direction
-                self.move_freq = int(self.move_freq * 0.95)
+                self.move_freq = int(self.move_freq * 0.91)
             self.move_frame_count = 0
 
         if self.frame_count == 5:
@@ -377,6 +377,9 @@ class Game:
             return 'GAME OVER'
         if not len(self.enemies.sprites()):
             return 'WIN'
+        for sprite in self.enemies.sprites():
+            if sprite.rect.bottom > 630:
+                return 'GAME OVER'
         if self.state:
             self.enemies.update()
             self.detect_collision()
