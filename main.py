@@ -200,7 +200,7 @@ def title_screen():
     while True:
         screen.fill((0, 0, 0))
 
-        font_title = pygame.font.Font('assets/Retro_Gaming.ttf', 48)
+        font_title = pygame.font.Font('assets/fonts/Retro_Gaming.ttf', 48)
         space_text = font_title.render('SPACE', True, (255, 255, 255))
         invaders_text = font_title.render('INVADERS', True, (30, 254, 30))
         space_text_rect = space_text.get_rect()
@@ -210,7 +210,7 @@ def title_screen():
         screen.blit(space_text, space_text_rect)
         screen.blit(invaders_text, invaders_text_rect)
 
-        font = pygame.font.Font('assets/Retro_Gaming.ttf', 33)
+        font = pygame.font.Font('assets/fonts/Retro_Gaming.ttf', 33)
         score_text = font.render('HI-SCORE', True, (255, 255, 255))
         score_text_rect = score_text.get_rect()
         score_text_rect.x += 10
@@ -226,7 +226,7 @@ def title_screen():
         score_num_rect.y += 38
         screen.blit(score_num_text, score_num_rect)
 
-        start_font = pygame.font.Font('assets/Retro_Gaming.ttf', 36)
+        start_font = pygame.font.Font('assets/fonts/Retro_Gaming.ttf', 36)
         start_text = start_font.render('START', True, (255, 255, 255))
         start_text_select = start_font.render('START', True, (30, 254, 30))
         start_text_rect = start_text.get_rect()
@@ -264,14 +264,14 @@ def game_over_screen():
     while True:
         screen.fill((0, 0, 0))
 
-        font_title = pygame.font.Font('assets/Retro_Gaming.ttf', 55)
+        font_title = pygame.font.Font('assets/fonts/Retro_Gaming.ttf', 55)
         game_over_text = font_title.render('GAME OVER', True, (255, 255, 255))
 
         game_over_rect = game_over_text.get_rect()
         game_over_rect.center = (SCREEN_SIZE[0] // 2, SCREEN_SIZE[1] // 4)
         screen.blit(game_over_text, game_over_rect)
 
-        font = pygame.font.Font('assets/Retro_Gaming.ttf', 33)
+        font = pygame.font.Font('assets/fonts/Retro_Gaming.ttf', 33)
         score_text = font.render('HI-SCORE', True, (255, 255, 255))
         score_text_rect = score_text.get_rect()
         score_text_rect.x += 10
@@ -287,7 +287,7 @@ def game_over_screen():
         score_num_rect.y += 38
         screen.blit(score_num_text, score_num_rect)
 
-        start_font = pygame.font.Font('assets/Retro_Gaming.ttf', 36)
+        start_font = pygame.font.Font('assets/fonts/Retro_Gaming.ttf', 36)
         start_text = start_font.render('START', True, (255, 255, 255))
         start_text_select = start_font.render('START', True, (30, 254, 30))
         start_text_rect = start_text.get_rect()
@@ -385,7 +385,7 @@ class Game:
             self.detect_collision()
 
     def draw(self):
-        font = pygame.font.Font('assets/Retro_Gaming.ttf', 33)
+        font = pygame.font.Font('assets/fonts/Retro_Gaming.ttf', 33)
         score_text = font.render('SCORE', True, (255, 255, 255))
         score_text_rect = score_text.get_rect()
         score_text_rect.x += 10
