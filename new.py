@@ -15,6 +15,7 @@ SCALE = 4
 SCREEN_SIZE = (224, 192)
 FPS = 60
 VOLUME = 0.2
+DRAW_BOUNDING_BOXES = True
 
 
 def cut_sheet(image: pygame.Surface, rows: int, columns: int) -> tuple[pygame.Rect, list[pygame.Surface]]:
@@ -23,16 +24,16 @@ def cut_sheet(image: pygame.Surface, rows: int, columns: int) -> tuple[pygame.Re
     for j in range(rows):
         for i in range(columns):
             frame_location = (rect.w * i, rect.h * j)
-            frames.append(pygame.transform.scale_by(image.subsurface(pygame.Rect(frame_location, rect.size)), SCALE))
+            frames.append(image.subsurface(pygame.Rect(frame_location, rect.size)))
 
-    return rect, frames
+    return frames[0].get_bounding_rect(), frames
 
 
 def load_image_sheet(path: str) -> tuple[pygame.Rect, list[pygame.Surface], Enum]:
     with (open(Path(__file__).parent / (path + ".json"), encoding="utf-8") as json_file,
           open(Path(__file__).parent / (path + ".png"), encoding="utf-8") as image_file):
         data = json.load(json_file)
-        image = pygame.image.load(image_file)
+        image = pygame.transform.scale_by(pygame.image.load(image_file), SCALE)
         rect, frames = cut_sheet(image, data['rows'], data['columns'])
         states = Enum("AnimationState", data['states'])
         return rect, frames, states
@@ -100,8 +101,12 @@ class ImageDraw(pygame_ecs.BaseSystem):
         frame_index = sprite.state['frames'][sprite.cur_frame]
         frame = sprite.frames[frame_index]
 
-        rect = bounding_box.rect
+        rect = frame.get_rect().move(bounding_box.rect.centerx - (frame.get_rect().w // 2),
+                                     bounding_box.rect.centery - (frame.get_rect().h // 2) + 2)  # + 2 ???
 
+        if DRAW_BOUNDING_BOXES:
+            pygame.draw.rect(self.screen, 'red', rect, 2)
+            pygame.draw.rect(self.screen, 'blue', bounding_box.rect, 2)
         self.screen.blit(frame, rect)
 
         if sprite.cur_delay == 0:
@@ -115,9 +120,9 @@ class StartDeathAnim(pygame_ecs.BaseSystem):
         super().__init__(required_component_types=[AnimatedSprite, Health])
 
     def update_entity(
-        self,
-        entity: Entity,
-        entity_components: dict[typing.Type[BaseComponent], ComponentInstanceType],
+            self,
+            entity: Entity,
+            entity_components: dict[typing.Type[BaseComponent], ComponentInstanceType],
     ):
         health: int = entity_components[Health].health
         sprite: AnimatedSprite = entity_components[AnimatedSprite]
@@ -131,7 +136,8 @@ def init_player(entity_manager: pygame_ecs.EntityManager, component_manager: pyg
     player: pygame_ecs.Entity = entity_manager.add_entity()
     rect, frames, states = load_image_sheet("assets/player_2x3")
     component_manager.add_component(player, AnimatedSprite(frames, states))
-    component_manager.add_component(player, BoundingBox(rect))
+    component_manager.add_component(player, BoundingBox(rect.move(((SCREEN_SIZE[0] * SCALE) - rect[2]) // 2,
+                                                                  (SCREEN_SIZE[1] * SCALE) - rect[3] - 32)))
 
 
 def main():
