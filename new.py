@@ -62,6 +62,10 @@ class Image(pygame_ecs.BaseComponent):
         self.image: pygame.Surface = image
 
 
+class Player(pygame_ecs.BaseComponent):
+    pass
+
+
 class AnimatedSprite(pygame_ecs.BaseComponent):
     def __init__(self, frames: list[pygame.Surface], states: Enum):
         super().__init__()
@@ -75,7 +79,6 @@ class AnimatedSprite(pygame_ecs.BaseComponent):
 class BoundingBox(pygame_ecs.BaseComponent):
     def __init__(self, rect: pygame.Rect):
         super().__init__()
-        self.position = pygame.Vector2(rect.x, rect.y)
         self.rect = rect
 
 
@@ -83,6 +86,12 @@ class Health(pygame_ecs.BaseComponent):
     def __init__(self, health: int):
         super().__init__()
         self.health = health
+
+
+class Velocity(pygame_ecs.BaseComponent):
+    def __init__(self):
+        super().__init__()
+        self.vector = pygame.Vector2(0, 0)
 
 
 class ImageDraw(pygame_ecs.BaseSystem):
@@ -115,6 +124,56 @@ class ImageDraw(pygame_ecs.BaseSystem):
         sprite.cur_delay = increment_delay(sprite.cur_delay, sprite.state)
 
 
+class PlayerMovement(pygame_ecs.BaseSystem):
+    def __init__(self):
+        super().__init__(required_component_types=[Player, BoundingBox, AnimatedSprite, Velocity])
+        self.direction = [0]
+
+    def update_entity(
+            self,
+            entity: Entity,
+            entity_components: dict[typing.Type[BaseComponent], ComponentInstanceType],
+    ):
+        velocity: Velocity = entity_components[Velocity]
+
+        keys = pygame.event.get(pygame.KEYDOWN)
+        for key in keys:
+            if key.key == pygame.K_RIGHT:
+                self.direction.append(1)
+            if key.key == pygame.K_LEFT:
+                self.direction.append(-1)
+
+        keys = pygame.event.get(pygame.KEYUP)
+        for key in keys:
+            if key.key == pygame.K_RIGHT:
+                self.direction.remove(1)
+            if key.key == pygame.K_LEFT:
+                self.direction.remove(-1)
+
+        if self.direction[-1] == 0:
+            velocity.vector = pygame.Vector2(0, 0)
+
+        if self.direction[-1] == 1:
+            velocity.vector = pygame.Vector2(6, 0)
+
+        if self.direction[-1] == -1:
+            velocity.vector = pygame.Vector2(-6, 0)
+
+
+class ApplyVelocity(pygame_ecs.BaseSystem):
+    def __init__(self):
+        super().__init__(required_component_types=[BoundingBox, Velocity])
+
+    def update_entity(
+            self,
+            entity: Entity,
+            entity_components: dict[typing.Type[BaseComponent], ComponentInstanceType],
+    ):
+        bounding_box: BoundingBox = entity_components[BoundingBox]
+        velocity: Velocity = entity_components[Velocity]
+        bounding_box.rect = bounding_box.rect.move(velocity.vector)
+
+
 class StartDeathAnim(pygame_ecs.BaseSystem):
     def __init__(self):
         super().__init__(required_component_types=[AnimatedSprite, Health])
@@ -138,6 +197,8 @@ def init_player(entity_manager: pygame_ecs.EntityManager, component_manager: pyg
     component_manager.add_component(player, AnimatedSprite(frames, states))
     component_manager.add_component(player, BoundingBox(rect.move(((SCREEN_SIZE[0] * SCALE) - rect[2]) // 2,
                                                                   (SCREEN_SIZE[1] * SCALE) - rect[3] - 32)))
+    component_manager.add_component(player, Player())
+    component_manager.add_component(player, Velocity())
 
 
 def main():
@@ -149,6 +210,9 @@ def main():
     system_manager = pygame_ecs.SystemManager(entity_manager, component_manager)
 
     system_manager.add_system(ImageDraw(screen))
+    system_manager.add_system(ApplyVelocity())
+    system_manager.add_system(StartDeathAnim())
+    system_manager.add_system(PlayerMovement())
     component_manager.init_components()
 
     init_player(entity_manager, component_manager)
