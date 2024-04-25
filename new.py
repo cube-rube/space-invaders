@@ -16,6 +16,7 @@ SCREEN_SIZE = (224, 192)
 FPS = 60
 VOLUME = 0.2
 DRAW_BOUNDING_BOXES = True
+PLAYER_SPEED = 6
 
 
 def cut_sheet(image: pygame.Surface, rows: int, columns: int) -> tuple[pygame.Rect, list[pygame.Surface]]:
@@ -124,6 +125,28 @@ class ImageDraw(pygame_ecs.BaseSystem):
         sprite.cur_delay = increment_delay(sprite.cur_delay, sprite.state)
 
 
+class ApplyVelocity(pygame_ecs.BaseSystem):
+    def __init__(self):
+        super().__init__(required_component_types=[BoundingBox, Velocity])
+
+    def update_entity(
+            self,
+            entity: Entity,
+            entity_components: dict[typing.Type[BaseComponent], ComponentInstanceType],
+    ):
+        bounding_box: BoundingBox = entity_components[BoundingBox]
+        velocity: Velocity = entity_components[Velocity]
+        bounding_box.rect = bounding_box.rect.move(velocity.vector)
+        if bounding_box.rect.x < 0:
+            bounding_box.rect.x = 0
+        if bounding_box.rect.x > (SCREEN_SIZE[0]) * SCALE - bounding_box.rect.w:
+            bounding_box.rect.x = (SCREEN_SIZE[0]) * SCALE - bounding_box.rect.w
+        if bounding_box.rect.y < 0:
+            bounding_box.rect.y = 0
+        if bounding_box.rect.y > (SCREEN_SIZE[1]) * SCALE - bounding_box.rect.h:
+            bounding_box.rect.y = (SCREEN_SIZE[1]) * SCALE - bounding_box.rect.h
+
+
 class PlayerMovement(pygame_ecs.BaseSystem):
     def __init__(self):
         super().__init__(required_component_types=[Player, BoundingBox, AnimatedSprite, Velocity])
@@ -154,24 +177,10 @@ class PlayerMovement(pygame_ecs.BaseSystem):
             velocity.vector = pygame.Vector2(0, 0)
 
         if self.direction[-1] == 1:
-            velocity.vector = pygame.Vector2(6, 0)
+            velocity.vector = pygame.Vector2(PLAYER_SPEED, 0)
 
         if self.direction[-1] == -1:
-            velocity.vector = pygame.Vector2(-6, 0)
-
-
-class ApplyVelocity(pygame_ecs.BaseSystem):
-    def __init__(self):
-        super().__init__(required_component_types=[BoundingBox, Velocity])
-
-    def update_entity(
-            self,
-            entity: Entity,
-            entity_components: dict[typing.Type[BaseComponent], ComponentInstanceType],
-    ):
-        bounding_box: BoundingBox = entity_components[BoundingBox]
-        velocity: Velocity = entity_components[Velocity]
-        bounding_box.rect = bounding_box.rect.move(velocity.vector)
+            velocity.vector = pygame.Vector2(-PLAYER_SPEED, 0)
 
 
 class StartDeathAnim(pygame_ecs.BaseSystem):
@@ -183,22 +192,35 @@ class StartDeathAnim(pygame_ecs.BaseSystem):
             entity: Entity,
             entity_components: dict[typing.Type[BaseComponent], ComponentInstanceType],
     ):
-        health: int = entity_components[Health].health
+        health: Health = entity_components[Health]
         sprite: AnimatedSprite = entity_components[AnimatedSprite]
-        if health == 0:
+        if health.health == 0:
             sprite.state = sprite.states.DEATH.value
             sprite.cur_delay = 0
             sprite.cur_frame = 0
+            health.health = -1
 
 
 def init_player(entity_manager: pygame_ecs.EntityManager, component_manager: pygame_ecs.ComponentManager) -> None:
     player: pygame_ecs.Entity = entity_manager.add_entity()
     rect, frames, states = load_image_sheet("assets/player_2x3")
+    rect.centerx = SCREEN_SIZE[0] * SCALE // 2
+    rect.centery = SCREEN_SIZE[1] * SCALE - 16 * SCALE
     component_manager.add_component(player, AnimatedSprite(frames, states))
-    component_manager.add_component(player, BoundingBox(rect.move(((SCREEN_SIZE[0] * SCALE) - rect[2]) // 2,
-                                                                  (SCREEN_SIZE[1] * SCALE) - rect[3] - 32)))
+    component_manager.add_component(player, BoundingBox(rect))
     component_manager.add_component(player, Player())
     component_manager.add_component(player, Velocity())
+    component_manager.add_component(player, Health(3))
+
+
+def init_enemies(entity_manager: pygame_ecs.EntityManager, component_manager: pygame_ecs.ComponentManager) -> None:
+    for i in range(11):
+        enemy_sqiud = entity_manager.add_entity()
+        rect, frames, states = load_image_sheet("assets/squid_2x4")
+        component_manager.add_component(enemy_sqiud, AnimatedSprite(frames, states))
+        component_manager.add_component(enemy_sqiud, BoundingBox(rect.move((28 + 16 * i) * SCALE, (30 + 16) * SCALE)))
+        component_manager.add_component(enemy_sqiud, Velocity())
+        component_manager.add_component(enemy_sqiud, Health(1))
 
 
 def main():
@@ -216,6 +238,7 @@ def main():
     component_manager.init_components()
 
     init_player(entity_manager, component_manager)
+    init_enemies(entity_manager, component_manager)
 
     while True:
         pygame.event.pump()
