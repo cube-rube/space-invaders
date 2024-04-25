@@ -1,0 +1,20 @@
+{
+  "rows": 1,
+  "columns": 4,
+  "states": {
+    "IDLE": {
+      "frames": [
+        0, 1, 2, 3
+      ],
+      "delay": 5,
+      "looping": true
+    },
+    "DEATH": {
+      "frames": [
+        -1
+      ],
+      "delay": null,
+      "looping": false
+    }
+  }
+}

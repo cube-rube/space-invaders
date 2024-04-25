@@ -1,0 +1,13 @@
+{
+  "rows": 1,
+  "columns": 1,
+  "states": {
+    "IDLE": {
+      "frames": [
+        0
+      ],
+      "delay": null,
+      "looping": false
+    }
+  }
+}
