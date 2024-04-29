@@ -9,7 +9,6 @@ from random import randint
 import functools
 import os
 
-
 import pygame
 from pygame_ecs import Entity
 from pygame_ecs.components.base_component import BaseComponent
@@ -20,14 +19,15 @@ from pygame_ecs.systems.base_system import BaseSystem
 
 SCALE = 4
 SCREEN_SIZE = (224, 192)
-FPS = 60
+FPS = 0
 VOLUME = 0.2
 DRAW_BOUNDING_BOXES = False
 PLAYER_SPEED = 2 * SCALE
 
 EVENT_LIST: list[pygame.event.Event] = []
 ENTITY_LIST: list[Entity] = []
-ENTITY_QUEUE: list[list[BaseComponent]] = []
+ENTITY_SPAWN_QUEUE: list[list[BaseComponent]] = []
+ENTITY_KILL_QUEUE: list[Entity] = []
 SYSTEM_PERF: dict[str: float] = dict()
 
 
@@ -59,14 +59,16 @@ def load_image(path: str) -> tuple[pygame.surface.Surface]:
     return pygame.transform.scale_by(pygame.image.load(abs_path), SCALE),
 
 
-def increment_delay(cur_delay, state: dict) -> int:
+def increment_delay(cur_delay, state: dict, clock: pygame.time.Clock) -> int:
     delay: int = state['delay']
     looping: bool = state['looping']
+
     if delay is None:
         return -1
-    if looping:
-        return (cur_delay + 1) % delay
-    return cur_delay + 1
+    if not looping and cur_delay < 0:
+        return -1
+    cur_delay -= 1 / 12 * clock.get_time()
+    return cur_delay
 
 
 def cls():
@@ -96,13 +98,15 @@ class Direction(Enum):
 
 
 class ShootOnEvent(BaseComponent):
-    def __init__(self, event: tuple, direction: Direction, sprites: tuple[str], cooldown: int = 10):
+    def __init__(self, event: tuple, direction: Direction,
+                 sprites: tuple[str], cooldown: int = 50, projectile_speed: float = (15 / 4)):
         super().__init__()
         self.event = event
         self.direction = direction
         self.sprites = sprites
         self.cooldown_timer = 0
         self.cooldown = cooldown
+        self.projectile_speed = projectile_speed
 
 
 class AnimatedSprite(BaseComponent):
@@ -112,13 +116,15 @@ class AnimatedSprite(BaseComponent):
         self.cur_frame = cur_frame
         self.states = states
         self.state: dict = self.states.IDLE.value
-        self.cur_delay = 0
+        self.cur_delay: float = 0
 
 
 class BoundingBox(BaseComponent):
     def __init__(self, rect: pygame.Rect):
         super().__init__()
         self.rect = rect
+        self.x: float = rect.x
+        self.y: float = rect.y
 
 
 class Health(BaseComponent):
@@ -156,9 +162,10 @@ def system_performance(func):
 
 
 class ImageDraw(BaseSystem):
-    def __init__(self, screen: pygame.Surface):
+    def __init__(self, screen: pygame.Surface, clock: pygame.time.Clock):
         super().__init__(required_component_types=[AnimatedSprite, BoundingBox])
         self.screen = screen
+        self.clock = clock
 
     def update_entity(
             self,
@@ -181,15 +188,16 @@ class ImageDraw(BaseSystem):
         if DRAW_BOUNDING_BOXES:
             pygame.draw.rect(self.screen, 'red', rect, 2)
 
-        if sprite.cur_delay == 0:
+        if sprite.cur_delay <= 0:
             sprite.cur_frame = (sprite.cur_frame + 1) % len(sprite.state['frames'])
-
-        sprite.cur_delay = increment_delay(sprite.cur_delay, sprite.state)
+            sprite.cur_delay = sprite.state['delay']
+        sprite.cur_delay = increment_delay(sprite.cur_delay, sprite.state, self.clock)
 
 
 class PositionCalculation(BaseSystem):
-    def __init__(self):
+    def __init__(self, clock: pygame.time.Clock):
         super().__init__(required_component_types=[BoundingBox, Velocity])
+        self.clock = clock
 
     def update_entity(
             self,
@@ -198,15 +206,22 @@ class PositionCalculation(BaseSystem):
     ):
         bounding_box: BoundingBox = entity_components[BoundingBox]
         velocity: Velocity = entity_components[Velocity]
-        bounding_box.rect = bounding_box.rect.move(velocity.vector)
-        if bounding_box.rect.x < 0:
-            bounding_box.rect.x = 0
-        if bounding_box.rect.x > (SCREEN_SIZE[0]) * SCALE - bounding_box.rect.w:
-            bounding_box.rect.x = (SCREEN_SIZE[0]) * SCALE - bounding_box.rect.w
-        if bounding_box.rect.y < 0:
-            bounding_box.rect.y = 0
-        if bounding_box.rect.y > (SCREEN_SIZE[1]) * SCALE - bounding_box.rect.h:
-            bounding_box.rect.y = (SCREEN_SIZE[1]) * SCALE - bounding_box.rect.h
+
+        if not (velocity.vector.x == 0 and velocity.vector.y == 0):
+            bounding_box.x += velocity.vector.x * 1 / 12 * self.clock.get_time()
+            bounding_box.y += velocity.vector.y * 1 / 12 * self.clock.get_time()
+
+            if bounding_box.x < 0:
+                bounding_box.x = 0
+            if bounding_box.x > (SCREEN_SIZE[0]) * SCALE - bounding_box.rect.w:
+                bounding_box.x = (SCREEN_SIZE[0]) * SCALE - bounding_box.rect.w
+            if bounding_box.y < 0 - bounding_box.rect.h:
+                ENTITY_KILL_QUEUE.append(entity)
+            if bounding_box.y > (SCREEN_SIZE[1]) * SCALE - bounding_box.rect.h:
+                bounding_box.y = (SCREEN_SIZE[1]) * SCALE - bounding_box.rect.h
+
+            bounding_box.rect.x = bounding_box.x
+            bounding_box.rect.y = bounding_box.y
 
 
 class PlayerMovement(BaseSystem):
@@ -246,17 +261,21 @@ class PlayerMovement(BaseSystem):
 
 
 class Shoot(BaseSystem):
-    def __init__(self):
+    def __init__(self, clock: pygame.time.Clock):
         super().__init__(required_component_types=[ShootOnEvent, BoundingBox])
+        self.clock = clock
 
     def update_entity(
         self,
         entity: Entity,
         entity_components: dict[typing.Type[BaseComponent], ComponentInstanceType],
     ):
-        d = time.perf_counter()
         shooting: ShootOnEvent = entity_components[ShootOnEvent]
         bounding_box = entity_components[BoundingBox]
+
+        if shooting.cooldown_timer > 0:
+            shooting.cooldown_timer -= 1 * 1 / 12 * self.clock.get_time()
+            return None
 
         for event in EVENT_LIST:
             if event.type == pygame.KEYDOWN == shooting.event[0]:
@@ -267,22 +286,23 @@ class Shoot(BaseSystem):
                     match shooting.direction:
                         case Direction.NORTH:
                             rect.centerx = bounding_box.rect.centerx
-                            rect.centery = bounding_box.rect.centery
-                            components.append(Velocity((0, -1)))
+                            rect.centery = bounding_box.rect.y - rect.h // 2 - 1 * SCALE
+                            components.append(Velocity((0, -shooting.projectile_speed * SCALE)))
                         case Direction.SOUTH:
                             rect.centerx = bounding_box.rect.centerx
                             rect.centery = bounding_box.rect.centery
-                            components.append(Velocity((0, 1)))
+                            components.append(Velocity((0, shooting.projectile_speed * SCALE)))
                         case Direction.EAST:
                             rect.centerx = bounding_box.rect.centerx
                             rect.centery = bounding_box.rect.centery
-                            components.append(Velocity((-1, 0)))
+                            components.append(Velocity((-shooting.projectile_speed * SCALE, 0)))
                         case Direction.WEST:
                             rect.centerx = bounding_box.rect.centerx
                             rect.centery = bounding_box.rect.centery
-                            components.append(Velocity((1, 0)))
+                            components.append(Velocity((shooting.projectile_speed * SCALE, 0)))
                     components.append(BoundingBox(rect))
-                    ENTITY_QUEUE.append(components)
+                    ENTITY_SPAWN_QUEUE.append(components)
+                    shooting.cooldown_timer = shooting.cooldown
 
 
 class StartDeathAnimation(BaseSystem):
@@ -364,11 +384,11 @@ def main():
     entity_manager = EntityManager(component_manager)
     system_manager = SystemManager(entity_manager, component_manager)
 
-    system_manager.add_system(ImageDraw(screen))
-    system_manager.add_system(PositionCalculation())
+    system_manager.add_system(ImageDraw(screen, clock))
+    system_manager.add_system(PositionCalculation(clock))
     system_manager.add_system(StartDeathAnimation())
     system_manager.add_system(PlayerMovement())
-    system_manager.add_system(Shoot())
+    system_manager.add_system(Shoot(clock))
     component_manager.init_components()
 
     ENTITY_LIST.append(init_player(entity_manager, component_manager))
@@ -386,8 +406,13 @@ def main():
 
         system_manager.update_entities()
 
-        for components in ENTITY_QUEUE:
-            ENTITY_LIST.append(add_entity_from_queue(components, entity_manager, component_manager))
+        while len(ENTITY_SPAWN_QUEUE) > 0:
+            ENTITY_LIST.append(add_entity_from_queue(ENTITY_SPAWN_QUEUE.pop(), entity_manager, component_manager))
+
+        while len(ENTITY_KILL_QUEUE) > 0:
+            entity = ENTITY_KILL_QUEUE.pop()
+            ENTITY_LIST.remove(entity)
+            entity_manager.kill_entity(entity)
 
         pygame.display.update()
         clock.tick(FPS)
