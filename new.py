@@ -26,6 +26,7 @@ PLAYER_SPEED = 2 * SCALE
 
 EVENT_LIST: list[pygame.event.Event] = []
 ENTITY_LIST: list[Entity] = []
+RECT_LIST: list[tuple[pygame.rect.Rect, Entity]] = []
 ENTITY_SPAWN_QUEUE: list[list[BaseComponent]] = []
 ENTITY_KILL_QUEUE: list[Entity] = []
 SYSTEM_PERF: dict[str: float] = dict()
@@ -137,6 +138,10 @@ class Velocity(BaseComponent):
     def __init__(self, vector: tuple[float, float] = (0.0, 0.0)):
         super().__init__()
         self.vector = pygame.Vector2(vector)
+
+
+class KillOnContact(BaseComponent):
+    pass
 
 
 # ------------------------------------------------------------
@@ -301,8 +306,28 @@ class Shoot(BaseSystem):
                             rect.centery = bounding_box.rect.centery
                             components.append(Velocity((shooting.projectile_speed * SCALE, 0)))
                     components.append(BoundingBox(rect))
+                    components.append(KillOnContact())
                     ENTITY_SPAWN_QUEUE.append(components)
                     shooting.cooldown_timer = shooting.cooldown
+
+
+class Kill(BaseSystem):
+    def __init__(self):
+        super().__init__(required_component_types=[BoundingBox, KillOnContact])
+
+    def update_entity(
+        self,
+        entity: Entity,
+        entity_components: dict[typing.Type[BaseComponent], ComponentInstanceType],
+    ):
+        bounding_box: BoundingBox = entity_components[BoundingBox]
+        indices = bounding_box.rect.collidelistall(list(map(lambda x: x[0], RECT_LIST)))
+        if len(indices) == 0:
+            return None
+        for index in indices:
+            ENTITY_KILL_QUEUE.append(RECT_LIST[index][1])
+            RECT_LIST.pop(index)
+        ENTITY_KILL_QUEUE.append(entity)
 
 
 class StartDeathAnimation(BaseSystem):
@@ -350,6 +375,7 @@ def load_enemy(path: str, row: int, column: int,
     component_manager.add_component(enemy, AnimatedSprite(frames, states, randint(0, len(frames) - 1)))
     component_manager.add_component(enemy, BoundingBox(rect))
     component_manager.add_component(enemy, Health(1))
+    RECT_LIST.append((rect, enemy))
     return enemy
 
 
@@ -389,6 +415,7 @@ def main():
     system_manager.add_system(StartDeathAnimation())
     system_manager.add_system(PlayerMovement())
     system_manager.add_system(Shoot(clock))
+    system_manager.add_system(Kill())
     component_manager.init_components()
 
     ENTITY_LIST.append(init_player(entity_manager, component_manager))
