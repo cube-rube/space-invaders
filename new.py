@@ -20,13 +20,13 @@ from pygame_ecs.systems.base_system import BaseSystem
 SCALE = 4
 SCREEN_SIZE = (224, 192)
 FPS = 0
-VOLUME = 0.2
+VOLUME = 0.05
 DRAW_BOUNDING_BOXES = False
-PLAYER_SPEED = 2 * SCALE
+PLAYER_SPEED = 1 * SCALE
 
 EVENT_LIST: list[pygame.event.Event] = []
 ENTITY_LIST: list[Entity] = []
-RECT_LIST: list[tuple[pygame.rect.Rect, Entity]] = []
+ENEMY_RECT_LIST: list[tuple[pygame.rect.Rect, Entity]] = []
 ENTITY_SPAWN_QUEUE: list[list[BaseComponent]] = []
 ENTITY_KILL_QUEUE: list[Entity] = []
 SYSTEM_PERF: dict[str: float] = dict()
@@ -100,7 +100,7 @@ class Direction(Enum):
 
 class ShootOnEvent(BaseComponent):
     def __init__(self, event: tuple, direction: Direction,
-                 sprites: tuple[str], cooldown: int = 50, projectile_speed: float = (15 / 4)):
+                 sprites: tuple[str], cooldown: int = 50, projectile_speed: float = (7 / 4)):
         super().__init__()
         self.event = event
         self.direction = direction
@@ -142,6 +142,14 @@ class Velocity(BaseComponent):
 
 class KillOnContact(BaseComponent):
     pass
+
+
+class StepMovement(BaseComponent):
+    def __init__(self):
+        self.freq = 55
+        self.delay = self.freq
+        self.step_count = 8
+        self.direction = 1
 
 
 # ------------------------------------------------------------
@@ -213,8 +221,8 @@ class PositionCalculation(BaseSystem):
         velocity: Velocity = entity_components[Velocity]
 
         if not (velocity.vector.x == 0 and velocity.vector.y == 0):
-            bounding_box.x += velocity.vector.x * 1 / 12 * self.clock.get_time()
-            bounding_box.y += velocity.vector.y * 1 / 12 * self.clock.get_time()
+            bounding_box.x += velocity.vector.x / 12 * self.clock.get_time()
+            bounding_box.y += velocity.vector.y / 12 * self.clock.get_time()
 
             if bounding_box.x < 0:
                 bounding_box.x = 0
@@ -231,7 +239,7 @@ class PositionCalculation(BaseSystem):
 
 class PlayerMovement(BaseSystem):
     def __init__(self):
-        super().__init__(required_component_types=[Player, BoundingBox, AnimatedSprite, Velocity])
+        super().__init__(required_component_types=[Player, Velocity])
         self.direction = [0]
 
     def update_entity(
@@ -265,6 +273,33 @@ class PlayerMovement(BaseSystem):
             velocity.vector = pygame.Vector2(-PLAYER_SPEED, 0)
 
 
+class EnemyMovement(BaseSystem):
+    def __init__(self, clock: pygame.time.Clock):
+        super().__init__(required_component_types=[BoundingBox, StepMovement])
+        self.clock = clock
+
+    def update_entity(
+        self,
+        entity: Entity,
+        entity_components: dict[typing.Type[BaseComponent], ComponentInstanceType],
+    ):
+        stepping: StepMovement = entity_components[StepMovement]
+        bounding_box: BoundingBox = entity_components[BoundingBox]
+
+        stepping.delay -= 1 / 12 * self.clock.get_time()
+
+        if stepping.delay < 0:
+            if stepping.step_count > 0:
+                bounding_box.rect.x += 12 * stepping.direction
+                stepping.step_count -= 1
+            else:
+                bounding_box.rect.y += 16
+                stepping.step_count = 16
+                stepping.direction = -stepping.direction
+                stepping.freq = stepping.freq * 0.91
+            stepping.delay = stepping.freq
+
+
 class Shoot(BaseSystem):
     def __init__(self, clock: pygame.time.Clock):
         super().__init__(required_component_types=[ShootOnEvent, BoundingBox])
@@ -293,6 +328,9 @@ class Shoot(BaseSystem):
                             rect.centerx = bounding_box.rect.centerx
                             rect.centery = bounding_box.rect.y - rect.h // 2 - 1 * SCALE
                             components.append(Velocity((0, -shooting.projectile_speed * SCALE)))
+                            sound = pygame.mixer.Sound('assets/sounds/270344__littlerobotsoundfactory__shoot_00.wav')
+                            sound.set_volume(VOLUME)
+                            sound.play()
                         case Direction.SOUTH:
                             rect.centerx = bounding_box.rect.centerx
                             rect.centery = bounding_box.rect.centery
@@ -305,6 +343,9 @@ class Shoot(BaseSystem):
                             rect.centerx = bounding_box.rect.centerx
                             rect.centery = bounding_box.rect.centery
                             components.append(Velocity((shooting.projectile_speed * SCALE, 0)))
+                            sound = pygame.mixer.Sound('assets/sounds/270343__littlerobotsoundfactory__shoot_01.wav')
+                            sound.set_volume(VOLUME)
+                            sound.play()
                     components.append(BoundingBox(rect))
                     components.append(KillOnContact())
                     ENTITY_SPAWN_QUEUE.append(components)
@@ -321,12 +362,12 @@ class Kill(BaseSystem):
         entity_components: dict[typing.Type[BaseComponent], ComponentInstanceType],
     ):
         bounding_box: BoundingBox = entity_components[BoundingBox]
-        indices = bounding_box.rect.collidelistall(list(map(lambda x: x[0], RECT_LIST)))
+        indices = bounding_box.rect.collidelistall(list(map(lambda x: x[0], ENEMY_RECT_LIST)))
         if len(indices) == 0:
             return None
         for index in indices:
-            ENTITY_KILL_QUEUE.append(RECT_LIST[index][1])
-            RECT_LIST.pop(index)
+            ENTITY_KILL_QUEUE.append(ENEMY_RECT_LIST[index][1])
+            ENEMY_RECT_LIST.pop(index)
         ENTITY_KILL_QUEUE.append(entity)
 
 
@@ -370,12 +411,12 @@ def load_enemy(path: str, row: int, column: int,
                component_manager: ComponentManager) -> Entity:
     enemy = entity_manager.add_entity()
     rect, frames, states = load_image_sheet(path)
-    rect.x = (28 - int(row >= 2) - int(row >= 3) + 16 * column) * SCALE
+    rect.x = (28 - int(row >= 1) - int(row >= 2) + 16 * column) * SCALE
     rect.y = (30 + 16 * row) * SCALE
     component_manager.add_component(enemy, AnimatedSprite(frames, states, randint(0, len(frames) - 1)))
     component_manager.add_component(enemy, BoundingBox(rect))
-    component_manager.add_component(enemy, Health(1))
-    RECT_LIST.append((rect, enemy))
+    component_manager.add_component(enemy, StepMovement())
+    ENEMY_RECT_LIST.append((rect, enemy))
     return enemy
 
 
@@ -383,11 +424,11 @@ def init_enemies(entity_manager: EntityManager,
                  component_manager: ComponentManager) -> list[Entity]:
     enemies = []
     for i in range(11):
-        enemies.append(load_enemy("assets/sprites/squid", 1, i, entity_manager, component_manager))
+        enemies.append(load_enemy("assets/sprites/squid", 0, i, entity_manager, component_manager))
+        enemies.append(load_enemy("assets/sprites/enemy", 1, i, entity_manager, component_manager))
         enemies.append(load_enemy("assets/sprites/enemy", 2, i, entity_manager, component_manager))
-        enemies.append(load_enemy("assets/sprites/enemy", 3, i, entity_manager, component_manager))
+        enemies.append(load_enemy("assets/sprites/brute", 3, i, entity_manager, component_manager))
         enemies.append(load_enemy("assets/sprites/brute", 4, i, entity_manager, component_manager))
-        enemies.append(load_enemy("assets/sprites/brute", 5, i, entity_manager, component_manager))
 
     return enemies
 
@@ -403,6 +444,9 @@ def add_entity_from_queue(components: list[BaseComponent],
 
 def main():
     global EVENT_LIST, ENTITY_LIST
+    pygame.init()
+    pygame.mixer.init()
+    pygame.display.set_caption('Space Invaders')
     screen = pygame.display.set_mode(tuple(map(lambda x: x * SCALE, SCREEN_SIZE)))
     clock = pygame.time.Clock()
 
@@ -414,6 +458,7 @@ def main():
     system_manager.add_system(PositionCalculation(clock))
     system_manager.add_system(StartDeathAnimation())
     system_manager.add_system(PlayerMovement())
+    system_manager.add_system(EnemyMovement(clock))
     system_manager.add_system(Shoot(clock))
     system_manager.add_system(Kill())
     component_manager.init_components()
@@ -440,6 +485,9 @@ def main():
             entity = ENTITY_KILL_QUEUE.pop()
             ENTITY_LIST.remove(entity)
             entity_manager.kill_entity(entity)
+
+        if len(ENEMY_RECT_LIST) == 0:
+            ENTITY_LIST += init_enemies(entity_manager, component_manager)
 
         pygame.display.update()
         clock.tick(FPS)
