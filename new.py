@@ -140,8 +140,11 @@ class Velocity(BaseComponent):
         self.vector = pygame.Vector2(vector)
 
 
-class KillOnContact(BaseComponent):
-    pass
+class DamageOnContact(BaseComponent):
+    def __init__(self, parent: str, damage: int = 1):
+        super().__init__()
+        self.parent = parent
+        self.damage = damage
 
 
 class StepMovement(BaseComponent):
@@ -348,14 +351,14 @@ class Shoot(BaseSystem):
                             sound.set_volume(VOLUME)
                             sound.play()
                     components.append(BoundingBox(rect))
-                    components.append(KillOnContact())
+                    components.append(DamageOnContact("player"))
                     ENTITY_SPAWN_QUEUE.append(components)
                     shooting.cooldown_timer = shooting.cooldown
 
 
-class KillEntities(BaseSystem):
+class DamageEntities(BaseSystem):
     def __init__(self):
-        super().__init__(required_component_types=[BoundingBox, KillOnContact])
+        super().__init__(required_component_types=[BoundingBox, DamageOnContact])
 
     def update_entity(
         self,
@@ -370,6 +373,19 @@ class KillEntities(BaseSystem):
             ENTITY_KILL_QUEUE.append(ENEMY_RECT_LIST[index][1])
             ENEMY_RECT_LIST.pop(index)
         ENTITY_KILL_QUEUE.append(entity)
+
+
+class KillEntities(BaseSystem):
+    def __init__(self):
+        super().__init__(required_component_types=[Health])
+
+    def update_entity(
+        self,
+        entity: Entity,
+        entity_components: dict[typing.Type[BaseComponent], ComponentInstanceType],
+    ):
+        if entity_components[Health].health == 0:
+            ENTITY_KILL_QUEUE.append(entity)
 
 
 class StartDeathAnimation(BaseSystem):
@@ -461,7 +477,7 @@ def main():
     system_manager.add_system(PlayerMovement())
     system_manager.add_system(EnemyMovement(clock))
     system_manager.add_system(Shoot(clock))
-    system_manager.add_system(KillEntities())
+    system_manager.add_system(DamageEntities())
     component_manager.init_components()
 
     ENTITY_LIST.append(init_player(entity_manager, component_manager))
