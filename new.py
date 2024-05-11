@@ -60,7 +60,7 @@ def load_image(path: str) -> tuple[pygame.surface.Surface]:
     return pygame.transform.scale_by(pygame.image.load(abs_path), SCALE),
 
 
-def increment_delay(cur_delay, state: dict, clock: pygame.time.Clock) -> int:
+def increment_delay(cur_delay: float, state: dict, clock: pygame.time.Clock) -> float:
     delay: int = state['delay']
     looping: bool = state['looping']
 
@@ -87,7 +87,7 @@ class Image(BaseComponent):
         self.image: pygame.Surface = image
 
 
-class Player(BaseComponent):
+class PlayerControlled(BaseComponent):
     pass
 
 
@@ -146,6 +146,7 @@ class KillOnContact(BaseComponent):
 
 class StepMovement(BaseComponent):
     def __init__(self):
+        super().__init__()
         self.freq = 55
         self.delay = self.freq
         self.step_count = 8
@@ -174,7 +175,7 @@ def system_performance(func):
     return wrapper
 
 
-class ImageDraw(BaseSystem):
+class SpriteDraw(BaseSystem):
     def __init__(self, screen: pygame.Surface, clock: pygame.time.Clock):
         super().__init__(required_component_types=[AnimatedSprite, BoundingBox])
         self.screen = screen
@@ -239,7 +240,7 @@ class PositionCalculation(BaseSystem):
 
 class PlayerMovement(BaseSystem):
     def __init__(self):
-        super().__init__(required_component_types=[Player, Velocity])
+        super().__init__(required_component_types=[PlayerControlled, Velocity])
         self.direction = [0]
 
     def update_entity(
@@ -352,7 +353,7 @@ class Shoot(BaseSystem):
                     shooting.cooldown_timer = shooting.cooldown
 
 
-class Kill(BaseSystem):
+class KillEntities(BaseSystem):
     def __init__(self):
         super().__init__(required_component_types=[BoundingBox, KillOnContact])
 
@@ -397,7 +398,7 @@ def init_player(entity_manager: EntityManager,
     rect.centery = SCREEN_SIZE[1] * SCALE - 16 * SCALE
     component_manager.add_component(player, AnimatedSprite(frames, states))
     component_manager.add_component(player, BoundingBox(rect))
-    component_manager.add_component(player, Player())
+    component_manager.add_component(player, PlayerControlled())
     component_manager.add_component(player, ShootOnEvent((pygame.KEYDOWN, pygame.K_SPACE),
                                                          Direction.NORTH,
                                                          ("assets/sprites/bullet", )))
@@ -454,13 +455,13 @@ def main():
     entity_manager = EntityManager(component_manager)
     system_manager = SystemManager(entity_manager, component_manager)
 
-    system_manager.add_system(ImageDraw(screen, clock))
+    system_manager.add_system(SpriteDraw(screen, clock))
     system_manager.add_system(PositionCalculation(clock))
     system_manager.add_system(StartDeathAnimation())
     system_manager.add_system(PlayerMovement())
     system_manager.add_system(EnemyMovement(clock))
     system_manager.add_system(Shoot(clock))
-    system_manager.add_system(Kill())
+    system_manager.add_system(KillEntities())
     component_manager.init_components()
 
     ENTITY_LIST.append(init_player(entity_manager, component_manager))
