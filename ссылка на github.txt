@@ -1,5 +1,0 @@
-https://github.com/serg-tel/space-invaders
-
-звуки взяты из: https://freesound.org/people/LittleRobotSoundFactory/packs/16681/
-шрифт взят из: https://www.dafont.com/retro-gaming.font
-музыка взята из: https://freesound.org/people/EVRetro/sounds/583613/

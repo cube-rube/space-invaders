@@ -23,13 +23,17 @@ FPS = 0
 VOLUME = 0.05
 DRAW_BOUNDING_BOXES = False
 PLAYER_SPEED = 1 * SCALE
+SCORE = 0
 
-EVENT_LIST: list[pygame.event.Event] = []
-ENTITY_LIST: list[Entity] = []
-ENEMY_RECT_LIST: list[tuple[pygame.rect.Rect, Entity]] = []
-ENTITY_SPAWN_QUEUE: list[list[BaseComponent]] = []
-ENTITY_KILL_QUEUE: list[Entity] = []
-SYSTEM_PERF: dict[str: float] = dict()
+
+class GameScene(Enum):
+    MENU = 0
+    GAME = 1
+    GAME_OVER = 2
+    DEATH = 3
+
+
+GAME_SCENE = GameScene.MENU
 
 
 def cut_sheet(image: pygame.Surface, rows: int, columns: int) -> tuple[pygame.Rect, list[pygame.Surface]]:
@@ -53,23 +57,15 @@ def load_image_sheet(path: str) -> tuple[pygame.Rect, list[pygame.Surface], Enum
         return rect, frames, states
 
 
-def load_image(path: str) -> tuple[pygame.surface.Surface]:
+def load_file(path: str) -> Path:
     abs_path = Path(__file__).parent / path
     if not abs_path.is_file():
-        raise FileNotFoundError(f"Tried loading {abs_path} as image")
-    return pygame.transform.scale_by(pygame.image.load(abs_path), SCALE),
+        raise FileNotFoundError()
+    return abs_path
 
 
-def increment_delay(cur_delay: float, state: dict, clock: pygame.time.Clock) -> float:
-    delay: int = state['delay']
-    looping: bool = state['looping']
-
-    if delay is None:
-        return -1
-    if not looping and cur_delay < 0:
-        return -1
-    cur_delay -= 1 / 12 * clock.get_time()
-    return cur_delay
+def load_image(path: str) -> tuple[pygame.surface.Surface]:
+    return pygame.transform.scale_by(pygame.image.load(load_file(path)), SCALE),
 
 
 def cls():
@@ -100,7 +96,7 @@ class Direction(Enum):
 
 class ShootOnEvent(BaseComponent):
     def __init__(self, event: tuple, direction: Direction,
-                 sprites: tuple[str], cooldown: int = 50, projectile_speed: float = (7 / 4)):
+                 sprites: tuple[str, ...], cooldown: int = 50, projectile_speed: float = (7 / 4)):
         super().__init__()
         self.event = event
         self.direction = direction
@@ -156,6 +152,23 @@ class StepMovement(BaseComponent):
         self.direction = 1
 
 
+class GameOverOnDeath(BaseComponent):
+    def __init__(self):
+        super().__init__()
+        self.delay = 80
+
+
+EVENT_LIST: list[pygame.event.Event] = []
+ENTITY_LIST: list[Entity] = []
+ENEMY_RECT_LIST: list[tuple[pygame.rect.Rect, Entity]] = []
+PLAYER_RECT_HEALTH: tuple[pygame.rect.Rect, Health] | None = None
+ENTITY_SPAWN_QUEUE: list[list[BaseComponent]] = []
+ENTITY_KILL_QUEUE: list[Entity] = []
+SYSTEM_PERF: dict[str: float] = dict()
+
+ENEMY_SHOOT = pygame.USEREVENT + 1
+
+
 # ------------------------------------------------------------
 # SYSTEMS
 # ------------------------------------------------------------
@@ -175,7 +188,20 @@ def system_performance(func):
         SYSTEM_PERF[class_name] += performance
 
         return result
+
     return wrapper
+
+
+def increment_delay(cur_delay: float, state: dict, clock: pygame.time.Clock) -> float | None:
+    delay: int = state['delay']
+    looping: bool = state['looping']
+
+    if delay is None:
+        return -1
+    if not looping and cur_delay < 0:
+        return -1
+    cur_delay -= 1 / 12 * clock.get_time()
+    return cur_delay
 
 
 class SpriteDraw(BaseSystem):
@@ -235,7 +261,7 @@ class PositionCalculation(BaseSystem):
             if bounding_box.y < 0 - bounding_box.rect.h:
                 ENTITY_KILL_QUEUE.append(entity)
             if bounding_box.y > (SCREEN_SIZE[1]) * SCALE - bounding_box.rect.h:
-                bounding_box.y = (SCREEN_SIZE[1]) * SCALE - bounding_box.rect.h
+                ENTITY_KILL_QUEUE.append(entity)
 
             bounding_box.rect.x = bounding_box.x
             bounding_box.rect.y = bounding_box.y
@@ -283,9 +309,9 @@ class EnemyMovement(BaseSystem):
         self.clock = clock
 
     def update_entity(
-        self,
-        entity: Entity,
-        entity_components: dict[typing.Type[BaseComponent], ComponentInstanceType],
+            self,
+            entity: Entity,
+            entity_components: dict[typing.Type[BaseComponent], ComponentInstanceType],
     ):
         stepping: StepMovement = entity_components[StepMovement]
         bounding_box: BoundingBox = entity_components[BoundingBox]
@@ -310,10 +336,11 @@ class Shoot(BaseSystem):
         self.clock = clock
 
     def update_entity(
-        self,
-        entity: Entity,
-        entity_components: dict[typing.Type[BaseComponent], ComponentInstanceType],
+            self,
+            entity: Entity,
+            entity_components: dict[typing.Type[BaseComponent], ComponentInstanceType],
     ):
+        global EVENT_LIST
         shooting: ShootOnEvent = entity_components[ShootOnEvent]
         bounding_box = entity_components[BoundingBox]
 
@@ -332,7 +359,8 @@ class Shoot(BaseSystem):
                             rect.centerx = bounding_box.rect.centerx
                             rect.centery = bounding_box.rect.y - rect.h // 2 - 1 * SCALE
                             components.append(Velocity((0, -shooting.projectile_speed * SCALE)))
-                            sound = pygame.mixer.Sound('assets/sounds/270344__littlerobotsoundfactory__shoot_00.wav')
+                            sound = pygame.mixer.Sound(load_file('assets/sounds'
+                                                                 '/270344__littlerobotsoundfactory__shoot_00.wav'))
                             sound.set_volume(VOLUME)
                             sound.play()
                         case Direction.SOUTH:
@@ -347,13 +375,39 @@ class Shoot(BaseSystem):
                             rect.centerx = bounding_box.rect.centerx
                             rect.centery = bounding_box.rect.centery
                             components.append(Velocity((shooting.projectile_speed * SCALE, 0)))
-                            sound = pygame.mixer.Sound('assets/sounds/270343__littlerobotsoundfactory__shoot_01.wav')
+                            sound = pygame.mixer.Sound(load_file('assets/sounds'
+                                                                 '/270343__littlerobotsoundfactory__shoot_01.wav'))
                             sound.set_volume(VOLUME)
                             sound.play()
                     components.append(BoundingBox(rect))
                     components.append(DamageOnContact("player"))
                     ENTITY_SPAWN_QUEUE.append(components)
                     shooting.cooldown_timer = shooting.cooldown
+            elif event.type == shooting.event[0]:
+                components = []
+                rect, frames, states = load_image_sheet(random.choice(shooting.sprites))
+                components.append(AnimatedSprite(frames, states))
+                match shooting.direction:
+                    case Direction.NORTH:
+                        rect.centerx = bounding_box.rect.centerx
+                        rect.centery = bounding_box.rect.y - rect.h // 2 - 1 * SCALE
+                        components.append(Velocity((0, -shooting.projectile_speed * SCALE)))
+                    case Direction.SOUTH:
+                        rect.centerx = bounding_box.rect.centerx
+                        rect.centery = bounding_box.rect.centery
+                        components.append(Velocity((0, shooting.projectile_speed * SCALE)))
+                    case Direction.EAST:
+                        rect.centerx = bounding_box.rect.centerx
+                        rect.centery = bounding_box.rect.centery
+                        components.append(Velocity((-shooting.projectile_speed * SCALE, 0)))
+                    case Direction.WEST:
+                        rect.centerx = bounding_box.rect.centerx
+                        rect.centery = bounding_box.rect.centery
+                        components.append(Velocity((shooting.projectile_speed * SCALE, 0)))
+                components.append(BoundingBox(rect))
+                components.append(DamageOnContact("enemy"))
+                ENTITY_SPAWN_QUEUE.append(components)
+                shooting.cooldown_timer = shooting.cooldown
 
 
 class DamageEntities(BaseSystem):
@@ -361,18 +415,27 @@ class DamageEntities(BaseSystem):
         super().__init__(required_component_types=[BoundingBox, DamageOnContact])
 
     def update_entity(
-        self,
-        entity: Entity,
-        entity_components: dict[typing.Type[BaseComponent], ComponentInstanceType],
+            self,
+            entity: Entity,
+            entity_components: dict[typing.Type[BaseComponent], ComponentInstanceType],
     ):
+        global SCORE
         bounding_box: BoundingBox = entity_components[BoundingBox]
-        indices = bounding_box.rect.collidelistall(list(map(lambda x: x[0], ENEMY_RECT_LIST)))
-        if len(indices) == 0:
-            return None
-        for index in indices:
-            ENTITY_KILL_QUEUE.append(ENEMY_RECT_LIST[index][1])
-            ENEMY_RECT_LIST.pop(index)
-        ENTITY_KILL_QUEUE.append(entity)
+        damaging: DamageOnContact = entity_components[DamageOnContact]
+        if damaging.parent == "player":
+            indices = bounding_box.rect.collidelistall(list(map(lambda x: x[0], ENEMY_RECT_LIST)))
+            if len(indices) == 0:
+                return None
+            for index in indices:
+                ENTITY_KILL_QUEUE.append(ENEMY_RECT_LIST[index][1])
+                ENEMY_RECT_LIST.pop(index)
+                SCORE += 100
+            ENTITY_KILL_QUEUE.append(entity)
+        else:
+            if not bounding_box.rect.colliderect(PLAYER_RECT_HEALTH[0]):
+                return None
+            PLAYER_RECT_HEALTH[1].health -= 1
+            ENTITY_KILL_QUEUE.append(entity)
 
 
 class KillEntities(BaseSystem):
@@ -380,9 +443,9 @@ class KillEntities(BaseSystem):
         super().__init__(required_component_types=[Health])
 
     def update_entity(
-        self,
-        entity: Entity,
-        entity_components: dict[typing.Type[BaseComponent], ComponentInstanceType],
+            self,
+            entity: Entity,
+            entity_components: dict[typing.Type[BaseComponent], ComponentInstanceType],
     ):
         if entity_components[Health].health == 0:
             ENTITY_KILL_QUEUE.append(entity)
@@ -406,8 +469,29 @@ class StartDeathAnimation(BaseSystem):
             health.health = -1
 
 
+class StartGameOverAnimation(BaseSystem):
+    def __init__(self, clock: pygame.time.Clock):
+        super().__init__(required_component_types=[Health, GameOverOnDeath])
+        self.clock = clock
+
+    def update_entity(
+            self,
+            entity: Entity,
+            entity_components: dict[typing.Type[BaseComponent], ComponentInstanceType],
+    ):
+        global GAME_SCENE
+        health: Health = entity_components[Health]
+        game_over: GameOverOnDeath = entity_components[GameOverOnDeath]
+        if health.health <= 0:
+            GAME_SCENE = GameScene.DEATH
+            if game_over.delay <= 0:
+                GAME_SCENE = GameScene.GAME_OVER
+            game_over.delay -= 1 * 1 / 12 * self.clock.get_time()
+
+
 def init_player(entity_manager: EntityManager,
                 component_manager: ComponentManager) -> Entity:
+    global PLAYER_RECT_HEALTH
     player: Entity = entity_manager.add_entity()
     rect, frames, states = load_image_sheet("assets/sprites/player")
     rect.centerx = SCREEN_SIZE[0] * SCALE // 2
@@ -417,15 +501,18 @@ def init_player(entity_manager: EntityManager,
     component_manager.add_component(player, PlayerControlled())
     component_manager.add_component(player, ShootOnEvent((pygame.KEYDOWN, pygame.K_SPACE),
                                                          Direction.NORTH,
-                                                         ("assets/sprites/bullet", )))
+                                                         ("assets/sprites/bullet",)))
     component_manager.add_component(player, Velocity())
-    component_manager.add_component(player, Health(3))
+    health = Health(3)
+    component_manager.add_component(player, health)
+    component_manager.add_component(player, GameOverOnDeath())
+    PLAYER_RECT_HEALTH = (rect, health)
     return player
 
 
 def load_enemy(path: str, row: int, column: int,
                entity_manager: EntityManager,
-               component_manager: ComponentManager) -> Entity:
+               component_manager: ComponentManager, can_shoot: int = -1) -> Entity:
     enemy = entity_manager.add_entity()
     rect, frames, states = load_image_sheet(path)
     rect.x = (28 - int(row >= 1) - int(row >= 2) + 16 * column) * SCALE
@@ -433,6 +520,11 @@ def load_enemy(path: str, row: int, column: int,
     component_manager.add_component(enemy, AnimatedSprite(frames, states, randint(0, len(frames) - 1)))
     component_manager.add_component(enemy, BoundingBox(rect))
     component_manager.add_component(enemy, StepMovement())
+    if can_shoot != -1:
+        component_manager.add_component(enemy, ShootOnEvent((can_shoot, None),
+                                                            Direction.SOUTH,
+                                                            ("assets/sprites/bullet1", "assets/sprites/bullet2"),
+                                                            0))
     ENEMY_RECT_LIST.append((rect, enemy))
     return enemy
 
@@ -440,12 +532,14 @@ def load_enemy(path: str, row: int, column: int,
 def init_enemies(entity_manager: EntityManager,
                  component_manager: ComponentManager) -> list[Entity]:
     enemies = []
+    event_int = pygame.USEREVENT + 2
     for i in range(11):
-        enemies.append(load_enemy("assets/sprites/squid", 0, i, entity_manager, component_manager))
+        enemies.append(load_enemy("assets/sprites/squid", 0, i, entity_manager, component_manager, can_shoot=event_int))
         enemies.append(load_enemy("assets/sprites/enemy", 1, i, entity_manager, component_manager))
         enemies.append(load_enemy("assets/sprites/enemy", 2, i, entity_manager, component_manager))
         enemies.append(load_enemy("assets/sprites/brute", 3, i, entity_manager, component_manager))
         enemies.append(load_enemy("assets/sprites/brute", 4, i, entity_manager, component_manager))
+        event_int += 1
 
     return enemies
 
@@ -460,7 +554,7 @@ def add_entity_from_queue(components: list[BaseComponent],
 
 
 def main():
-    global EVENT_LIST, ENTITY_LIST
+    global EVENT_LIST, ENTITY_LIST, GAME_SCENE, SCORE
     pygame.init()
     pygame.mixer.init()
     pygame.display.set_caption('Space Invaders')
@@ -469,48 +563,237 @@ def main():
 
     component_manager = ComponentManager()
     entity_manager = EntityManager(component_manager)
-    system_manager = SystemManager(entity_manager, component_manager)
 
-    system_manager.add_system(SpriteDraw(screen, clock))
-    system_manager.add_system(PositionCalculation(clock))
-    system_manager.add_system(StartDeathAnimation())
-    system_manager.add_system(PlayerMovement())
-    system_manager.add_system(EnemyMovement(clock))
-    system_manager.add_system(Shoot(clock))
-    system_manager.add_system(DamageEntities())
     component_manager.init_components()
 
-    ENTITY_LIST.append(init_player(entity_manager, component_manager))
-    ENTITY_LIST += init_enemies(entity_manager, component_manager)
-
     while True:
-        EVENT_LIST = pygame.event.get()
+        match GAME_SCENE:
+            case GameScene.MENU:
+                state = 0
+                while True:
+                    screen.fill((0, 0, 0))
 
-        for event in EVENT_LIST:
-            if event.type == pygame.QUIT:
-                pygame.quit()
-                sys.exit(0)
+                    font_title = pygame.font.Font(load_file('assets/fonts/Retro_Gaming.ttf'), 48)
+                    space_text = font_title.render('SPACE', True, (255, 255, 255))
+                    invaders_text = font_title.render('INVADERS', True, (30, 254, 30))
+                    space_text_rect = space_text.get_rect()
+                    invaders_text_rect = invaders_text.get_rect()
+                    space_text_rect.center = (SCREEN_SIZE[0] * SCALE // 2 - 160, SCREEN_SIZE[1] * SCALE // 4)
+                    invaders_text_rect.center = (SCREEN_SIZE[0] * SCALE // 2 + 100, SCREEN_SIZE[1] * SCALE // 4)
+                    screen.blit(space_text, space_text_rect)
+                    screen.blit(invaders_text, invaders_text_rect)
 
-        screen.fill((0, 0, 0))
+                    font = pygame.font.Font(load_file('assets/fonts/Retro_Gaming.ttf'), 33)
+                    score_text = font.render('HI-SCORE', True, (255, 255, 255))
+                    score_text_rect = score_text.get_rect()
+                    score_text_rect.x += 10
+                    score_text_rect.y += 5
+                    screen.blit(score_text, score_text_rect)
 
-        system_manager.update_entities()
+                    with open(load_file('data/score.txt'), encoding='utf8') as file:
+                        data = file.readline()
+                        SCORE = data
+                    score_num_text = font.render(str(SCORE).zfill(6), True, (255, 255, 255))
+                    score_num_rect = score_num_text.get_rect()
+                    score_num_rect.x += 15
+                    score_num_rect.y += 38
+                    screen.blit(score_num_text, score_num_rect)
 
-        while len(ENTITY_SPAWN_QUEUE) > 0:
-            ENTITY_LIST.append(add_entity_from_queue(ENTITY_SPAWN_QUEUE.pop(), entity_manager, component_manager))
+                    start_font = pygame.font.Font(load_file('assets/fonts/Retro_Gaming.ttf'), 36)
+                    start_text = start_font.render('START', True, (255, 255, 255))
+                    start_text_select = start_font.render('START', True, (30, 254, 30))
+                    start_text_rect = start_text.get_rect()
+                    start_text_rect.center = (SCREEN_SIZE[0] * SCALE // 2, SCREEN_SIZE[1] * SCALE // 6 * 4)
 
-        while len(ENTITY_KILL_QUEUE) > 0:
-            entity = ENTITY_KILL_QUEUE.pop()
-            ENTITY_LIST.remove(entity)
-            entity_manager.kill_entity(entity)
+                    for event in pygame.event.get():
+                        if event.type == pygame.QUIT:
+                            pygame.quit()
+                            sys.exit()
+                        if event.type == pygame.MOUSEBUTTONUP:
+                            pos = pygame.mouse.get_pos()
+                            if start_text_rect.collidepoint(*pos):
+                                GAME_SCENE = GameScene.GAME
+                                break
 
-        if len(ENEMY_RECT_LIST) == 0:
-            ENTITY_LIST += init_enemies(entity_manager, component_manager)
+                    pos = pygame.mouse.get_pos()
+                    if start_text_rect.collidepoint(*pos):
+                        if state == 0:
+                            sound = pygame.mixer.Sound(
+                                load_file('assets/sounds/270315__littlerobotsoundfactory__menu_navigate_03.wav'))
+                            sound.set_volume(VOLUME)
+                            sound.play()
+                        screen.blit(start_text_select, start_text_rect)
+                        state = 1
+                    else:
+                        state = 0
+                        screen.blit(start_text, start_text_rect)
 
-        pygame.display.update()
-        clock.tick(FPS)
+                    pygame.display.flip()
+                    clock.tick(FPS)
+                    if GAME_SCENE != GameScene.MENU:
+                        break
+            case GameScene.GAME:
+                entity_manager = EntityManager(component_manager)
+                system_manager = SystemManager(entity_manager, component_manager)
 
-        for system, performance in sorted(SYSTEM_PERF.items(), key=lambda x: x[0]):
-            print(system, performance, sep="\t")
+                systems = [PositionCalculation(clock),
+                           PlayerMovement(),
+                           EnemyMovement(clock),
+                           Shoot(clock),
+                           DamageEntities()]
+
+                for system in systems:
+                    system_manager.add_system(system)
+
+                system_manager.add_system(SpriteDraw(screen, clock))
+                system_manager.add_system(StartDeathAnimation())
+                system_manager.add_system(StartGameOverAnimation(clock))
+
+                ENTITY_LIST.append(init_player(entity_manager, component_manager))
+                ENTITY_LIST += init_enemies(entity_manager, component_manager)
+
+                pygame.time.set_timer(ENEMY_SHOOT, random.randint(1, 1600))
+
+                SCORE = 0
+
+                while True:
+                    EVENT_LIST = pygame.event.get()
+
+                    for event in EVENT_LIST:
+                        if event.type == pygame.QUIT:
+                            pygame.quit()
+                            sys.exit(0)
+                        elif event.type == ENEMY_SHOOT:
+                            pygame.time.set_timer(ENEMY_SHOOT, random.randint(1, 1600))
+                            new_event = pygame.event.Event(random.randint(pygame.USEREVENT + 2, pygame.USEREVENT + 12))
+                            pygame.event.post(new_event)
+
+                    screen.fill((0, 0, 0))
+
+                    system_manager.update_entities()
+
+                    while len(ENTITY_SPAWN_QUEUE) > 0:
+                        ENTITY_LIST.append(
+                            add_entity_from_queue(ENTITY_SPAWN_QUEUE.pop(), entity_manager, component_manager))
+
+                    while len(ENTITY_KILL_QUEUE) > 0:
+                        entity = ENTITY_KILL_QUEUE.pop()
+                        ENTITY_LIST.remove(entity)
+                        entity_manager.kill_entity(entity)
+
+                    if len(ENEMY_RECT_LIST) == 0:
+                        ENTITY_LIST += init_enemies(entity_manager, component_manager)
+
+                    font = pygame.font.Font(load_file('assets/fonts/Retro_Gaming.ttf'), 33)
+                    score_text = font.render('SCORE', True, (255, 255, 255))
+                    score_text_rect = score_text.get_rect()
+                    score_text_rect.x += 10
+                    score_text_rect.y += 5
+                    screen.blit(score_text, score_text_rect)
+
+                    score_num_text = font.render(str(SCORE).zfill(6), True, (255, 255, 255))
+                    score_num_rect = score_num_text.get_rect()
+                    score_num_rect.x += 15
+                    score_num_rect.y += 38
+                    screen.blit(score_num_text, score_num_rect)
+
+                    lives_text = font.render('LIVES', True, (255, 255, 255))
+                    lives_rect = lives_text.get_rect()
+                    lives_rect.x += 500
+                    lives_rect.y += 5
+                    screen.blit(lives_text, lives_rect)
+
+                    for i in range(1, PLAYER_RECT_HEALTH[1].health + 1):
+                        image = load_image('assets/sprites/lives/image.png')[0]
+                        image = pygame.transform.scale_by(image, 0.5)
+                        rect = image.get_rect()
+                        rect.x += 600 + 56 * i
+                        rect.y += 10
+                        screen.blit(image, rect)
+
+                    pygame.display.update()
+                    clock.tick(FPS)
+
+                    if GAME_SCENE != GameScene.GAME:
+                        print("HAH")
+                        if GAME_SCENE != GameScene.DEATH:
+                            break
+                        else:
+                            for system in systems:
+                                system_manager.remove_system(system)
+                            systems = []
+
+                    for system, performance in sorted(SYSTEM_PERF.items(), key=lambda x: x[0]):
+                        print(system, performance, sep="\t")
+            case GameScene.GAME_OVER:
+                with open(load_file('data/score.txt'), encoding='utf8') as file:
+                    data = file.readline()
+                    score = int(data)
+                with open(load_file('data/score.txt'), mode='w', encoding='utf8') as file:
+                    file.write(str(max(SCORE, score)))
+                state = 0
+                while True:
+                    screen.fill((0, 0, 0))
+
+                    font_title = pygame.font.Font(load_file('assets/fonts/Retro_Gaming.ttf'), 55)
+                    game_over_text = font_title.render('GAME OVER', True, (255, 255, 255))
+
+                    game_over_rect = game_over_text.get_rect()
+                    game_over_rect.center = (SCREEN_SIZE[0] * 4 // 2, SCREEN_SIZE[1] * 4 // 4)
+                    screen.blit(game_over_text, game_over_rect)
+
+                    font = pygame.font.Font(load_file('assets/fonts/Retro_Gaming.ttf'), 33)
+                    score_text = font.render('HI-SCORE', True, (255, 255, 255))
+                    score_text_rect = score_text.get_rect()
+                    score_text_rect.x += 10
+                    score_text_rect.y += 5
+                    screen.blit(score_text, score_text_rect)
+
+                    with open(load_file('data/score.txt'), encoding='utf8') as file:
+                        data = file.readline()
+                        SCORE = int(data)
+                    score_num_text = font.render(str(SCORE).zfill(6), True, (255, 255, 255))
+                    score_num_rect = score_num_text.get_rect()
+                    score_num_rect.x += 15
+                    score_num_rect.y += 38
+                    screen.blit(score_num_text, score_num_rect)
+
+                    start_font = pygame.font.Font(load_file('assets/fonts/Retro_Gaming.ttf'), 36)
+                    start_text = start_font.render('START', True, (255, 255, 255))
+                    start_text_select = start_font.render('START', True, (30, 254, 30))
+                    start_text_rect = start_text.get_rect()
+                    start_text_rect.center = (SCREEN_SIZE[0] * 4 // 2, SCREEN_SIZE[1] * 4 // 6 * 4)
+
+                    for event in pygame.event.get():
+                        if event.type == pygame.QUIT:
+                            pygame.quit()
+                            sys.exit()
+                        if event.type == pygame.MOUSEBUTTONUP:
+                            pos = pygame.mouse.get_pos()
+                            if start_text_rect.collidepoint(*pos):
+                                GAME_SCENE = GameScene.GAME
+                                break
+
+                    pos = pygame.mouse.get_pos()
+                    if start_text_rect.collidepoint(*pos):
+                        if state == 0:
+                            sound = pygame.mixer.Sound(
+                                load_file('assets/sounds/'
+                                          '270315__littlerobotsoundfactory__menu_navigate_03.wav')
+                            )
+                            sound.set_volume(VOLUME)
+                            sound.play()
+                        screen.blit(start_text_select, start_text_rect)
+                        state = 1
+                    else:
+                        screen.blit(start_text, start_text_rect)
+                        state = 0
+
+                    pygame.display.flip()
+                    clock.tick(FPS)
+
+                    if GAME_SCENE != GameScene.GAME_OVER:
+                        break
 
 
 if __name__ == '__main__':
